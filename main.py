@@ -64,7 +64,7 @@ with mp_hands.Hands(static_image_mode=False,
                 red_object_center = find_red_object_center(image)
 
                 if hand_center is not None and red_object_center is not None:
-                    distance = np.linalg.norm(np.array(hand_center) - np.array(red_object_center))
+                    distance = np.linalg.norm(np.array(hand_center) - np.array(red_object_center)) - 30
                     cv2.putText(image, f"Distance: {int(distance)}", (50, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
                     emit_sound_based_on_distance(distance)
 
