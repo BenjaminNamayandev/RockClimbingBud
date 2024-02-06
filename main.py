@@ -41,4 +41,3 @@ with mp_pose.Pose(min_detection_confidence=0.5, min_tracking_confidence=0.5) as 
 # Release the capture once everything is done
 cap.release()
 cv2.destroyAllWindows()
-
