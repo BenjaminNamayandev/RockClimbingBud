@@ -1,66 +1,44 @@
 import cv2
-import pyautogui
-import numpy as np
+import mediapipe as mp
 
-def get_cursor_color():
-    # Get the current cursor position
-    x, y = pyautogui.position()
+mp_drawing = mp.solutions.drawing_utils
+mp_pose = mp.solutions.pose
 
-    # Get the pixel color at the cursor position
-    color = pyautogui.screenshot().getpixel((x, y))
+# Create a video capture object to access the webcam.
+cap = cv2.VideoCapture(0)
 
-    return color
+# Initialize the Pose estimation model.
+with mp_pose.Pose(min_detection_confidence=0.5, min_tracking_confidence=0.5) as pose:
+    while cap.isOpened():
+        success, image = cap.read()
+        if not success:
+            print("Ignoring empty camera frame.")
+            continue
 
-def get_color_name(color):
-    # Define predefined color values
-    color_values = {
-        'red': (255, 0, 0),
-        'green': (0, 255, 0), 
-        'blue': (0, 0, 255), 
-        'yellow': (255,255,0), 
-        'brown': (139,69,19), 
-        'orange':(255,165,0), 
-        'white': (255,255,255), 
-        'black': (0,0,0), 
-        'purple': (128, 0, 128), 
-        'pink' : (255, 0, 255)
-    }
+        # Convert the BGR image to RGB.
+        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        # Process the image and perform pose detection.
+        results = pose.process(image)
 
-    # Calculate the Euclidean distance to find the closest predefined color
-    color_name = min(color_values, key=lambda key: np.linalg.norm(np.array(color) - np.array(color_values[key])))
+        # Convert the image color back so it can be displayed.
+        image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
 
-    return color_name
+        # Draw the pose annotations on the image.
+        if results.pose_landmarks:
+            mp_drawing.draw_landmarks(
+                image, results.pose_landmarks, mp_pose.POSE_CONNECTIONS,
+                mp_drawing.DrawingSpec(color=(245,117,66), thickness=2, circle_radius=2),
+                mp_drawing.DrawingSpec(color=(245,66,230), thickness=2, circle_radius=2)
+            )
 
-def main():
-    # Open the webcam
-    cap = cv2.VideoCapture(0)
+        # Display the resulting frame
+        cv2.imshow('MediaPipe Pose', image)
 
-    # Initialize the previous color
-    prev_color = None
-
-    while True:
-        # Read a frame from the webcam
-        ret, frame = cap.read()
-
-        # Get the cursor color
-        cursor_color = get_cursor_color()
-
-        # Get the color name based on similarity
-        color_name = get_color_name(cursor_color)
-
-        # Display the color name on the webcam feed
-        cv2.putText(frame, f'Color: {color_name}', (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2, cv2.LINE_AA)
-
-        # Display the webcam feed in a window
-        cv2.imshow('Webcam Feed', frame)
-
-        # Break the loop if 'q' key is pressed
-        if cv2.waitKey(1) & 0xFF == ord('q'):
+        # Press 'q' to exit the loop
+        if cv2.waitKey(5) & 0xFF == ord('q'):
             break
 
-    # Release the webcam and close the window
-    cap.release()
-    cv2.destroyAllWindows()
+# Release the capture once everything is done
+cap.release()
+cv2.destroyAllWindows()
 
-if __name__ == "__main__":
-    main()
