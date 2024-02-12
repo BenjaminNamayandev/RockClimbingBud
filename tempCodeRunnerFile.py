@@ -1,14 +1,11 @@
-# importing needed libraries
 import cv2
 import mediapipe as mp
 import numpy as np
 import winsound  # This module is specific to Windows
 
-# Setting up position estimation
 mp_drawing = mp.solutions.drawing_utils
 mp_pose = mp.solutions.pose
 
-# Function that finds where the user's wrists are located
 def find_wrist_centers(pose_landmarks, image_width, image_height):
     wrist_centers = []
     if pose_landmarks:
@@ -18,7 +15,6 @@ def find_wrist_centers(pose_landmarks, image_width, image_height):
             wrist_centers.append(center)
     return wrist_centers
 
-# Apply color masking to isolate for a specific color, then find objects on screen that have that specific color
 def find_red_objects_centers_and_boxes(img, min_area=500):
     hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
     lower_red = np.array([0,120,70])
@@ -44,7 +40,6 @@ def find_red_objects_centers_and_boxes(img, min_area=500):
     return centers_boxes
 
 
-# Take into account distance from users' hands to the location of found red objects and correlate that to the frequency of a beep
 def emit_sound_based_on_distance(distance, max_distance=500):  # Increased max_distance for a wider range
     if distance is not None:
         # Adjust the frequency range to be wider
@@ -60,7 +55,6 @@ def emit_sound_based_on_distance(distance, max_distance=500):  # Increased max_d
         except RuntimeError as e:
             print(f"Error playing sound: {e}")
         
-# This function finds the closest red object to the users wrist
 def find_closest_object(hand_center, objects_centers):
     if not objects_centers or hand_center is None:
         return None, float('inf')
