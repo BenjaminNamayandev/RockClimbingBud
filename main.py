@@ -68,14 +68,26 @@ def find_closest_object(hand_center, objects_centers):
     min_distance_index = np.argmin(distances)
     return objects_centers[min_distance_index], distances[min_distance_index]
 
+# This function checks if a wrist is touching any red object
+def check_for_touch(wrist_center, objects_centers_and_boxes, touch_threshold=50):
+    touched_objects_indexes = []
+    for i, (center, _) in enumerate(objects_centers_and_boxes):
+        distance = np.linalg.norm(np.array(wrist_center) - np.array(center))
+        if distance <= touch_threshold:
+            touched_objects_indexes.append(i)
+    return touched_objects_indexes
+
+# Ensure to define all required functions and setup from the original code snippet before this loop
+
+# Ensure to define all required functions and setup from the original code snippet before this loop
+
 with mp_pose.Pose(static_image_mode=False, min_detection_confidence=0.5) as pose:
     cap = cv2.VideoCapture(0)
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)  # Reduce frame size
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-    frame_skip = 5  # Process every 5th frame
+    frame_skip = 5
     frame_count = 0
 
-    # Capture an initial frame to find red objects
     success, initial_image = cap.read()
     if success:
         initial_image = cv2.flip(initial_image, 1)
@@ -85,7 +97,7 @@ with mp_pose.Pose(static_image_mode=False, min_detection_confidence=0.5) as pose
         success, image = cap.read()
         if not success or frame_count % frame_skip != 0:
             frame_count += 1
-            continue  # Skip frame
+            continue
 
         image = cv2.flip(image, 1)
         image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
@@ -93,25 +105,28 @@ with mp_pose.Pose(static_image_mode=False, min_detection_confidence=0.5) as pose
 
         image_height, image_width, _ = image.shape
 
-        closest_distance = float('inf')
-        closest_wrist_center = None
-        closest_object_info = None
+        overall_closest_distance = float('inf')
+        overall_closest_pair = None
 
         if results.pose_landmarks:
             wrist_centers = find_wrist_centers(results.pose_landmarks, image_width, image_height)
             for wrist_center in wrist_centers:
                 closest_object, distance_to_closest = find_closest_object(wrist_center, red_objects_centers_and_boxes)
-                if closest_object and distance_to_closest < closest_distance:
-                    closest_distance = distance_to_closest
-                    closest_wrist_center = wrist_center
-                    closest_object_info = closest_object
+                if closest_object and distance_to_closest < overall_closest_distance:
+                    overall_closest_distance = distance_to_closest
+                    overall_closest_pair = (wrist_center, closest_object)
 
-            if closest_object_info:
-                red_object_center, red_object_box = closest_object_info
-                cv2.line(image, closest_wrist_center, red_object_center, (0, 255, 0), 3)
-                cv2.putText(image, f"Distance: {int(closest_distance)}", (50, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
-                emit_sound_based_on_distance(closest_distance)
+            if overall_closest_pair:
+                wrist_center, closest_object = overall_closest_pair
+                red_object_center, red_object_box = closest_object
+                cv2.line(image, wrist_center, red_object_center, (0, 255, 0), 3)
+                emit_sound_based_on_distance(overall_closest_distance)
 
+                # Check for touch with the closest object and remove if touched
+                if overall_closest_distance <= 50:  # Assuming 50 is the touch threshold
+                    red_objects_centers_and_boxes.remove(closest_object)
+
+        # Draw remaining red objects
         for _, red_object_box in red_objects_centers_and_boxes:
             x, y, w, h = red_object_box
             cv2.rectangle(image, (x, y), (x + w, y + h), (0, 255, 0), 2)
