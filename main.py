@@ -1,3 +1,4 @@
+# Necessary Imports
 import cv2
 import mediapipe as mp
 import numpy as np
@@ -93,58 +94,61 @@ with mp_pose.Pose(static_image_mode=False, min_detection_confidence=0.5) as pose
         # Detect red objects in the initial frame.
         red_objects_centers_and_boxes = find_red_objects_centers_and_boxes(initial_image)
 
+    previous_closest_wrist_name = None
     while cap.isOpened():
-        success, image = cap.read()
-        if not success or frame_count % frame_skip != 0:
+            success, image = cap.read()
+            if not success or frame_count % frame_skip != 0:
+                frame_count += 1
+                continue
+
+            image = cv2.flip(image, 1)
+            image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+            results = pose.process(image_rgb)
+
+            image_height, image_width, _ = image.shape
+
+            overall_closest_distance = float('inf')
+            overall_closest_pair = None
+            closest_wrist_name = None  # Variable to keep track of which wrist is currently closest.
+
+            if results.pose_landmarks:
+                wrist_centers = find_wrist_centers(results.pose_landmarks, image_width, image_height)
+                wrist_names = ['Right Wrist', 'Left Wrist']
+
+                for wrist_center, wrist_name in zip(wrist_centers, wrist_names):
+                    closest_object, distance_to_closest = find_closest_object(wrist_center, red_objects_centers_and_boxes)
+                    if closest_object and distance_to_closest < overall_closest_distance:
+                        overall_closest_distance = distance_to_closest
+                        overall_closest_pair = (wrist_center, closest_object)
+                        closest_wrist_name = wrist_name
+
+                # Check if the closest wrist has changed.
+                if closest_wrist_name != previous_closest_wrist_name and closest_wrist_name is not None:
+                    # Use text-to-speech to announce the change.
+                    tts_engine.say(f"{closest_wrist_name} is closer")
+                    tts_engine.runAndWait()
+                    previous_closest_wrist_name = closest_wrist_name  # Update the previously closest wrist.
+
+                if overall_closest_pair:
+                    wrist_center, closest_object = overall_closest_pair
+                    red_object_center, red_object_box = closest_object
+                    cv2.line(image, wrist_center, red_object_center, (0, 255, 0), 3)
+                    emit_sound_based_on_distance(overall_closest_distance)
+
+                    cv2.putText(image, f"{closest_wrist_name} is closer", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2, cv2.LINE_AA)
+
+                    if overall_closest_distance <= 50:
+                        red_objects_centers_and_boxes.remove(closest_object)
+
+            for _, red_object_box in red_objects_centers_and_boxes:
+                x, y, w, h = red_object_box
+                cv2.rectangle(image, (x, y), (x + w, y + h), (0, 255, 0), 2)
+
+            cv2.imshow('MediaPipe Pose', image)
+
+            if cv2.waitKey(5) & 0xFF == 27:
+                break
             frame_count += 1
-            continue
-
-        image = cv2.flip(image, 1)
-        # Convert the image to RGB for pose detection.
-        image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-        results = pose.process(image_rgb)
-
-        image_height, image_width, _ = image.shape
-
-        overall_closest_distance = float('inf')
-        overall_closest_pair = None
-        closest_wrist_name = None  # Keep track of which wrist is closest to a red object.
-
-        if results.pose_landmarks:
-            wrist_centers = find_wrist_centers(results.pose_landmarks, image_width, image_height)
-            wrist_names = ['Right Wrist', 'Left Wrist']
-
-            for wrist_center, wrist_name in zip(wrist_centers, wrist_names):
-                closest_object, distance_to_closest = find_closest_object(wrist_center, red_objects_centers_and_boxes)
-                if closest_object and distance_to_closest < overall_closest_distance:
-                    overall_closest_distance = distance_to_closest
-                    overall_closest_pair = (wrist_center, closest_object)
-                    closest_wrist_name = wrist_name  # Identify which wrist is closest.
-
-            if overall_closest_pair:
-                wrist_center, closest_object = overall_closest_pair
-                red_object_center, red_object_box = closest_object
-                # Draw a line between the wrist and the closest red object.
-                cv2.line(image, wrist_center, red_object_center, (0, 255, 0), 3)
-                emit_sound_based_on_distance(overall_closest_distance)
-
-                # Display which wrist is closer.
-                cv2.putText(image, f"{closest_wrist_name} is closer", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2, cv2.LINE_AA)
-
-                # If the wrist is touching a red object, consider removing it from the list.
-                if overall_closest_distance <= 50:  # Assuming touch threshold.
-                    red_objects_centers_and_boxes.remove(closest_object)
-
-        # Draw all detected red objects.
-        for _, red_object_box in red_objects_centers_and_boxes:
-            x, y, w, h = red_object_box
-            cv2.rectangle(image, (x, y), (x + w, y + h), (0, 255, 0), 2)
-
-        cv2.imshow('MediaPipe Pose', image)
-
-        if cv2.waitKey(5) & 0xFF == 27:  # Exit on ESC.
-            break
-        frame_count += 1
 
 cap.release()
 cv2.destroyAllWindows()
