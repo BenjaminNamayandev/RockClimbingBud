@@ -1,4 +1,4 @@
-# importing needed libraries
+# Importing the required libraries
 import cv2
 import mediapipe as mp
 import numpy as np
@@ -93,16 +93,24 @@ with mp_pose.Pose(static_image_mode=False, min_detection_confidence=0.5) as pose
 
         image_height, image_width, _ = image.shape
 
+        closest_distance = float('inf')
+        closest_wrist_center = None
+        closest_object_info = None
+
         if results.pose_landmarks:
             wrist_centers = find_wrist_centers(results.pose_landmarks, image_width, image_height)
             for wrist_center in wrist_centers:
                 closest_object, distance_to_closest = find_closest_object(wrist_center, red_objects_centers_and_boxes)
+                if closest_object and distance_to_closest < closest_distance:
+                    closest_distance = distance_to_closest
+                    closest_wrist_center = wrist_center
+                    closest_object_info = closest_object
 
-                if closest_object:
-                    red_object_center, red_object_box = closest_object
-                    cv2.line(image, wrist_center, red_object_center, (0, 255, 0), 3)
-                    cv2.putText(image, f"Distance: {int(distance_to_closest)}", (50, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
-                    emit_sound_based_on_distance(distance_to_closest)
+            if closest_object_info:
+                red_object_center, red_object_box = closest_object_info
+                cv2.line(image, closest_wrist_center, red_object_center, (0, 255, 0), 3)
+                cv2.putText(image, f"Distance: {int(closest_distance)}", (50, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
+                emit_sound_based_on_distance(closest_distance)
 
         for _, red_object_box in red_objects_centers_and_boxes:
             x, y, w, h = red_object_box
