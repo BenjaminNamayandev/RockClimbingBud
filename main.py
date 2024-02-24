@@ -2,7 +2,7 @@
 import cv2
 import mediapipe as mp
 import numpy as np
-import winsound 
+import pyaudio 
 import pyttsx3
 
 # Prepare drawing utilities and pose estimation from MediaPipe.
@@ -12,7 +12,11 @@ mp_pose = mp.solutions.pose
 # Initialize text-to-speech engine.
 tts_engine = pyttsx3.init()
 
-# A function to identify the positions of the user's wrists in the video frame.
+# Initialize sound engine.
+p = pyaudio.PyAudio()
+stream = p.open(format=pyaudio.paFloat32, channels=1, rate=44100, output=True)
+
+# This function identifies the positions of the user's wrists in the video frame.
 def find_wrist_centers(pose_landmarks, image_width, image_height):
     wrist_centers = []
     if pose_landmarks:
@@ -53,17 +57,15 @@ def find_red_objects_centers_and_boxes(img, min_area=500):
 # This function generates a sound with properties based on the distance to an object.
 def emit_sound_based_on_distance(distance, max_distance=500):
     if distance is not None:
-        # Convert the distance to a sound frequency and duration.
         frequency = int(2500 - (distance / max_distance) * 2000)
         frequency = max(500, min(2500, frequency))
-        duration = int(100 + (distance / max_distance) * 100)
-        duration = max(100, min(200, duration))
-        try:
-            winsound.Beep(frequency, duration)
-        except RuntimeError as e:
-            print(f"Couldn't play sound: {e}")
+        # Generate a tone for a short duration
+        duration = 0.1  # seconds
+        samplerate = 44100  # Hz
+        samples = (np.sin(2 * np.pi * np.arange(samplerate * duration) * frequency / samplerate)).astype(np.float32)
+        stream.write(samples.tobytes())
         
-# Identify the closest red object to the user's wrist.
+# This function identifies the closest red object to the user's wrist.
 def find_closest_object(hand_center, objects_centers):
     if not objects_centers or hand_center is None:
         return None, float('inf')
@@ -71,7 +73,7 @@ def find_closest_object(hand_center, objects_centers):
     min_distance_index = np.argmin(distances)
     return objects_centers[min_distance_index], distances[min_distance_index]
 
-# Check if the wrist is in proximity to any red objects, indicating a touch.
+# This function checks if the wrist is in proximity to any red objects, indicating a touch.
 def check_for_touch(wrist_center, objects_centers_and_boxes, touch_threshold=50):
     touched_objects_indexes = []
     for i, (center, _) in enumerate(objects_centers_and_boxes):
@@ -80,7 +82,7 @@ def check_for_touch(wrist_center, objects_centers_and_boxes, touch_threshold=50)
             touched_objects_indexes.append(i)
     return touched_objects_indexes
 
-with mp_pose.Pose(static_image_mode=False, min_detection_confidence=0.5) as pose:
+with mp_pose.Pose(static_image_mode=False, min_detection_confidence=0.5, model_complexity=0) as pose:
     # Initialize webcam.
     cap = cv2.VideoCapture(0)
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
@@ -152,3 +154,6 @@ with mp_pose.Pose(static_image_mode=False, min_detection_confidence=0.5) as pose
 
 cap.release()
 cv2.destroyAllWindows()
+stream.stop_stream()
+stream.close()
+p.terminate()
