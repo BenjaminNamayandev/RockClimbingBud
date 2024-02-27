@@ -65,13 +65,18 @@ def emit_sound_based_on_distance(distance, max_distance=500):
         samples = (np.sin(2 * np.pi * np.arange(samplerate * duration) * frequency / samplerate)).astype(np.float32)
         stream.write(samples.tobytes())
         
-# This function identifies the closest red object to the user's wrist.
+# This function identifies the closest red object to the user's wrist that is also above the wrist.
 def find_closest_object(hand_center, objects_centers):
     if not objects_centers or hand_center is None:
         return None, float('inf')
-    distances = [np.linalg.norm(np.array(hand_center) - np.array(center)) for center, _ in objects_centers]
+    # Filter objects that are above the wrist's y-coordinate.
+    filtered_objects_centers = [(center, box) for center, box in objects_centers if center[1] < hand_center[1]]
+    if not filtered_objects_centers:
+        return None, float('inf')
+    distances = [np.linalg.norm(np.array(hand_center) - np.array(center)) for center, _ in filtered_objects_centers]
     min_distance_index = np.argmin(distances)
-    return objects_centers[min_distance_index], distances[min_distance_index]
+    return filtered_objects_centers[min_distance_index], distances[min_distance_index]
+
 
 # This function checks if the wrist is in proximity to any red objects, indicating a touch.
 def check_for_touch(wrist_center, objects_centers_and_boxes, touch_threshold=50):
