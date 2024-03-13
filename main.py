@@ -2,8 +2,10 @@
 import cv2
 import mediapipe as mp
 import numpy as np
-import pyaudio 
+import pyaudio
 import pyttsx3
+from threading import Thread
+
 
 # Prepare drawing utilities and pose estimation from MediaPipe.
 mp_drawing = mp.solutions.drawing_utils
@@ -15,6 +17,13 @@ tts_engine = pyttsx3.init()
 # Initialize sound engine.
 p = pyaudio.PyAudio()
 stream = p.open(format=pyaudio.paFloat32, channels=1, rate=44100, output=True)
+
+def async_speak(text):
+    def run():
+        tts_engine.say(text)
+        tts_engine.runAndWait()
+    Thread(target=run).start()
+    
 
 # This function identifies the positions of the user's wrists and ankles in the video frame.
 def find_extremities_centers(pose_landmarks, image_width, image_height):
@@ -46,7 +55,7 @@ cv2.setMouseCallback('MediaPipe Pose', mouse_callback)
 def emit_sound_based_on_distance(distance, max_distance=500):
     if distance is not None:
         frequency = int(2500 - (distance / max_distance) * 2000)
-        frequency = max(500, min(2500, frequency))
+        frequency = max(300, min(3000, frequency))
         # Output a tone
         duration = 0.1  # in seconds
         samplerate = 44100  # in Hz
@@ -66,7 +75,7 @@ def find_closest_object(hand_center, objects_centers):
     return filtered_objects_centers[min_distance_index], distances[min_distance_index]
 
 # This function checks if the wrist is in proximity to any user-defined objects, indicating a touch.
-def check_for_touch(wrist_center, objects_centers_and_boxes, touch_threshold=50):
+def check_for_touch(wrist_center, objects_centers_and_boxes, touch_threshold=653):
     touched_objects_indexes = []
     for i, (center, _) in enumerate(objects_centers_and_boxes):
         distance = np.linalg.norm(np.array(wrist_center) - np.array(center))
@@ -74,11 +83,11 @@ def check_for_touch(wrist_center, objects_centers_and_boxes, touch_threshold=50)
             touched_objects_indexes.append(i)
     return touched_objects_indexes
 
-with mp_pose.Pose(static_image_mode=False, min_detection_confidence=0.5, model_complexity=0) as pose:
+with mp_pose.Pose(static_image_mode=False, min_detection_confidence=0.6, model_complexity=0) as pose:
     # Initialize webcam.
     cap = cv2.VideoCapture(0)
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640) 
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)  
     frame_skip = 5
     frame_count = 0
 
@@ -113,8 +122,7 @@ with mp_pose.Pose(static_image_mode=False, min_detection_confidence=0.5, model_c
             # Check if the closest wrist has changed.
             if closest_wrist_name != previous_closest_wrist_name and closest_wrist_name is not None:
                 # Use text-to-speech to announce the change.
-                tts_engine.say(closest_wrist_name)
-                tts_engine.runAndWait()
+                async_speak(closest_wrist_name)
                 previous_closest_wrist_name = closest_wrist_name
 
             if overall_closest_pair:
