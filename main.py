@@ -18,6 +18,8 @@ tts_engine = pyttsx3.init()
 p = pyaudio.PyAudio()
 stream = p.open(format=pyaudio.paFloat32, channels=1, rate=44100, output=True)
 
+locked_wrist_name = None  # Track the currently locked limb
+
 def async_speak(text):
     def run():
         tts_engine.say(text)
@@ -75,13 +77,12 @@ def find_closest_object(hand_center, objects_centers):
     return filtered_objects_centers[min_distance_index], distances[min_distance_index]
 
 # This function checks if the wrist is in proximity to any user-defined objects, indicating a touch.
-def check_for_touch(wrist_center, objects_centers_and_boxes, touch_threshold=653):
-    touched_objects_indexes = []
+def check_for_touch(wrist_center, objects_centers_and_boxes, touch_threshold=50):
     for i, (center, _) in enumerate(objects_centers_and_boxes):
         distance = np.linalg.norm(np.array(wrist_center) - np.array(center))
         if distance <= touch_threshold:
-            touched_objects_indexes.append(i)
-    return touched_objects_indexes
+            return True, i  # Return True and the index of the touched object
+    return False, None  # No touch detected
 
 with mp_pose.Pose(static_image_mode=False, min_detection_confidence=0.6, model_complexity=0) as pose:
     # Initialize webcam.
@@ -113,38 +114,43 @@ with mp_pose.Pose(static_image_mode=False, min_detection_confidence=0.6, model_c
             wrist_names = ['Right Wrist', 'Left Wrist', 'Right Ankle', 'Left Ankle']
 
             for wrist_center, wrist_name in zip(wrist_centers, wrist_names):
-                closest_object, distance_to_closest = find_closest_object(wrist_center, user_defined_boxes)
-                if closest_object and distance_to_closest < overall_closest_distance:
-                    overall_closest_distance = distance_to_closest
-                    overall_closest_pair = (wrist_center, closest_object)
-                    closest_wrist_name = wrist_name
+                if locked_wrist_name is None or wrist_name == locked_wrist_name:
+                    closest_object, distance_to_closest = find_closest_object(wrist_center, user_defined_boxes)
+                    if closest_object and distance_to_closest < overall_closest_distance:
+                        overall_closest_distance = distance_to_closest
+                        overall_closest_pair = (wrist_center, closest_object)
+                        closest_wrist_name = wrist_name
 
-            # Check if the closest wrist has changed.
-            if closest_wrist_name != previous_closest_wrist_name and closest_wrist_name is not None:
-                # Use text-to-speech to announce the change.
-                async_speak(closest_wrist_name)
-                previous_closest_wrist_name = closest_wrist_name
-
-            if overall_closest_pair:
+            if closest_wrist_name and (locked_wrist_name is None or closest_wrist_name == locked_wrist_name):
                 wrist_center, closest_object = overall_closest_pair
                 user_defined_object_center, user_defined_object_box = closest_object
                 cv2.line(image, wrist_center, user_defined_object_center, (0, 255, 0), 3)
                 emit_sound_based_on_distance(overall_closest_distance)
 
-                cv2.putText(image, f"{closest_wrist_name} is closer", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2, cv2.LINE_AA)
+                touched, touched_index = check_for_touch(wrist_center, user_defined_boxes, touch_threshold=50)
+                if touched:
+                    user_defined_boxes.pop(touched_index)
+                    locked_wrist_name = None  # Unlock the limb
+                    async_speak(f"{closest_wrist_name} touched the object")
+                else:
+                    if locked_wrist_name is None:
+                        locked_wrist_name = closest_wrist_name
+                        async_speak(f"{closest_wrist_name} is locked")
 
-                if overall_closest_distance <= 50:
-                    user_defined_boxes.remove(closest_object)
+                cv2.putText(image, f"{closest_wrist_name} is closer", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2, cv2.LINE_AA)
+            else:
+                if locked_wrist_name is not None:
+                    cv2.putText(image, f"{locked_wrist_name} is locked", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 0), 2, cv2.LINE_AA)
 
             for center, box in user_defined_boxes:
                 x, y, w, h = box
                 cv2.rectangle(image, (x, y), (x + w, y + h), (0, 255, 0), 2)
 
-            cv2.imshow('MediaPipe Pose', image)
+        cv2.imshow('MediaPipe Pose', image)
 
-            if cv2.waitKey(5) & 0xFF == 27:
-                break
-            frame_count += 1
+        if cv2.waitKey(5) & 0xFF == 27:
+            break
+        frame_count += 1
 
 cap.release()
 cv2.destroyAllWindows()
