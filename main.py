@@ -41,13 +41,26 @@ def find_extremities_centers(pose_landmarks, image_width, image_height):
 
 # Global list to keep track of boxes
 user_defined_boxes = []
+highest_box_y = float('inf')
+highest_box_index = None
+
+def update_highest_box():
+    global highest_box_y, highest_box_index
+    highest_box_y = float('inf')
+    highest_box_index = None
+    for i, ((x, y), box) in enumerate(user_defined_boxes):
+        if y < highest_box_y:
+            highest_box_y = y
+            highest_box_index = i
 
 # Callback function to update boxes on mouse click
 def mouse_callback(event, x, y, flags, param):
+    global highest_box_y, highest_box_index
     if event == cv2.EVENT_LBUTTONDOWN:
         box_size = 10  # You can adjust the size as needed
         box = (x - box_size // 2, y - box_size // 2, box_size, box_size)
         user_defined_boxes.append(((x, y), box))  # Append center and box
+        update_highest_box()
 
 # Register callback
 cv2.namedWindow('MediaPipe Pose')
@@ -61,7 +74,7 @@ def emit_sound_based_on_distance(distance, max_distance=500):
         # Output a tone
         duration = 0.1  # in seconds
         samplerate = 44100  # in Hz
-        samples = (np.sin(2 * np.pi * np.arange(samplerate * duration) * frequency / samplerate)).astype(np.float32) * 0.1
+        samples = (np.sin(2 * np.pi * np.arange(samplerate * duration) * frequency / samplerate)).astype(np.float32) * 0.01
         stream.write(samples.tobytes())
 
 # This function identifies the closest user-defined object to the user's wrist that is also above the wrist.
@@ -90,7 +103,7 @@ with mp_pose.Pose(static_image_mode=False, min_detection_confidence=0.6, model_c
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640) 
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)  
     frame_skip = 1
-    frame_count = 0
+    frame_count = 5
 
     previous_closest_wrist_name = None
     while cap.isOpened():
@@ -129,7 +142,10 @@ with mp_pose.Pose(static_image_mode=False, min_detection_confidence=0.6, model_c
 
                 touched, touched_index = check_for_touch(wrist_center, user_defined_boxes, touch_threshold=50)
                 if touched:
+                    if touched_index == highest_box_index:
+                        async_speak("You're done for")
                     user_defined_boxes.pop(touched_index)
+                    update_highest_box()
                     # Update the condition here to ensure the locked limb changes after a touch
                     if locked_wrist_name is not None:
                         last_locked_wrist_name = locked_wrist_name
@@ -148,9 +164,13 @@ with mp_pose.Pose(static_image_mode=False, min_detection_confidence=0.6, model_c
 
                 cv2.putText(image, f"{closest_wrist_name} is closer", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2, cv2.LINE_AA)
 
-            for center, box in user_defined_boxes:
+            for i, (center, box) in enumerate(user_defined_boxes):
                 x, y, w, h = box
-                cv2.rectangle(image, (x, y), (x + w, y + h), (0, 255, 0), 2)
+                # Check if the current box is the highest; if so, draw it in red
+                if i == highest_box_index:
+                    cv2.rectangle(image, (x, y), (x + w, y + h), (0, 0, 255), 2)  # Red color
+                else:
+                    cv2.rectangle(image, (x, y), (x + w, y + h), (0, 255, 0), 2)  # Green color
 
         cv2.imshow('MediaPipe Pose', image)
 
