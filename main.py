@@ -6,7 +6,6 @@ import pyaudio
 import pyttsx3
 from threading import Thread
 
-
 # Prepare drawing utilities and pose estimation from MediaPipe.
 mp_drawing = mp.solutions.drawing_utils
 mp_pose = mp.solutions.pose
@@ -19,6 +18,7 @@ p = pyaudio.PyAudio()
 stream = p.open(format=pyaudio.paFloat32, channels=1, rate=44100, output=True)
 
 locked_wrist_name = None  # Track the currently locked limb
+last_locked_wrist_name = None # Last locked wrist name
 
 def async_speak(text):
     def run():
@@ -32,7 +32,7 @@ def find_extremities_centers(pose_landmarks, image_width, image_height):
     extremities_centers = []
     if pose_landmarks:
         # Loop through both wrists and ankles using their specific IDs.
-        for extremity_id in [mp_pose.PoseLandmark.LEFT_WRIST, mp_pose.PoseLandmark.RIGHT_WRIST, mp_pose.PoseLandmark.LEFT_ANKLE, mp_pose.PoseLandmark.RIGHT_ANKLE]:
+        for extremity_id in [mp_pose.PoseLandmark.LEFT_INDEX, mp_pose.PoseLandmark.RIGHT_INDEX, mp_pose.PoseLandmark.LEFT_HEEL, mp_pose.PoseLandmark.RIGHT_HEEL]:
             extremity = pose_landmarks.landmark[extremity_id]
             # Calculate the extremity's center point on the screen.
             center = np.array([extremity.x * image_width, extremity.y * image_height]).astype(int)
@@ -61,7 +61,7 @@ def emit_sound_based_on_distance(distance, max_distance=500):
         # Output a tone
         duration = 0.1  # in seconds
         samplerate = 44100  # in Hz
-        samples = (np.sin(2 * np.pi * np.arange(samplerate * duration) * frequency / samplerate)).astype(np.float32)
+        samples = (np.sin(2 * np.pi * np.arange(samplerate * duration) * frequency / samplerate)).astype(np.float32) * 0.1
         stream.write(samples.tobytes())
 
 # This function identifies the closest user-defined object to the user's wrist that is also above the wrist.
@@ -89,7 +89,7 @@ with mp_pose.Pose(static_image_mode=False, min_detection_confidence=0.6, model_c
     cap = cv2.VideoCapture(0)
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640) 
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)  
-    frame_skip = 5
+    frame_skip = 1
     frame_count = 0
 
     previous_closest_wrist_name = None
@@ -111,7 +111,7 @@ with mp_pose.Pose(static_image_mode=False, min_detection_confidence=0.6, model_c
 
         if results.pose_landmarks:
             wrist_centers = find_extremities_centers(results.pose_landmarks, image_width, image_height)
-            wrist_names = ['Right Wrist', 'Left Wrist', 'Right Ankle', 'Left Ankle']
+            wrist_names = ['Right Hand', 'Left Hand', 'Right Foot', 'Left Foot']
 
             for wrist_center, wrist_name in zip(wrist_centers, wrist_names):
                 if locked_wrist_name is None or wrist_name == locked_wrist_name:
@@ -130,17 +130,23 @@ with mp_pose.Pose(static_image_mode=False, min_detection_confidence=0.6, model_c
                 touched, touched_index = check_for_touch(wrist_center, user_defined_boxes, touch_threshold=50)
                 if touched:
                     user_defined_boxes.pop(touched_index)
-                    locked_wrist_name = None  # Unlock the limb
-                    async_speak(f"{closest_wrist_name} touched the object")
+                    # Update the condition here to ensure the locked limb changes after a touch
+                    if locked_wrist_name is not None:
+                        last_locked_wrist_name = locked_wrist_name
+                    locked_wrist_name = None  # Unlock the limb after a touch
                 else:
                     if locked_wrist_name is None:
-                        locked_wrist_name = closest_wrist_name
-                        async_speak(f"{closest_wrist_name} is locked")
+                        # Choose a different limb if the current choice is the same as the last locked limb
+                        eligible_wrist_names = [name for name in wrist_names if name != last_locked_wrist_name]
+                        if closest_wrist_name in eligible_wrist_names:
+                            locked_wrist_name = closest_wrist_name
+                            async_speak(f"{closest_wrist_name}")
+                        elif eligible_wrist_names:
+                            # Optionally handle the case where the closest wrist is the same as the last locked one
+                            locked_wrist_name = eligible_wrist_names[0]
+                            async_speak(f"{eligible_wrist_names[0]}")
 
                 cv2.putText(image, f"{closest_wrist_name} is closer", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2, cv2.LINE_AA)
-            else:
-                if locked_wrist_name is not None:
-                    cv2.putText(image, f"{locked_wrist_name} is locked", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 0), 2, cv2.LINE_AA)
 
             for center, box in user_defined_boxes:
                 x, y, w, h = box
