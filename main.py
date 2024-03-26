@@ -5,6 +5,11 @@ import numpy as np
 import pyaudio
 import pyttsx3
 from threading import Thread
+from pygame import mixer  # Load the popular external library
+import time
+
+mixer.init()
+mixer.music.load('bell.mp3')
 
 # Prepare drawing utilities and pose estimation from MediaPipe.
 mp_drawing = mp.solutions.drawing_utils
@@ -18,7 +23,8 @@ p = pyaudio.PyAudio()
 stream = p.open(format=pyaudio.paFloat32, channels=1, rate=44100, output=True)
 
 locked_wrist_name = None  # Track the currently locked limb
-last_locked_wrist_name = None # Last locked wrist name
+last_locked_wrist_name = None  # Last locked wrist name
+locked_rock_index = None  # Track the currently locked rock
 
 def async_speak(text):
     def run():
@@ -55,16 +61,42 @@ def update_highest_box():
 
 # Callback function to update boxes on mouse click
 def mouse_callback(event, x, y, flags, param):
-    global highest_box_y, highest_box_index
     if event == cv2.EVENT_LBUTTONDOWN:
-        box_size = 10  # You can adjust the size as needed
+        box_size = 10  # Adjust the size as needed
         box = (x - box_size // 2, y - box_size // 2, box_size, box_size)
         user_defined_boxes.append(((x, y), box))  # Append center and box
         update_highest_box()
 
-# Register callback
+# Initialize webcam
+cap = cv2.VideoCapture(0)
+cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+
 cv2.namedWindow('MediaPipe Pose')
 cv2.setMouseCallback('MediaPipe Pose', mouse_callback)
+
+# Initial Setup Loop
+while True:
+    success, image = cap.read()
+    if not success:
+        continue
+
+    image = cv2.flip(image, 1)
+
+    for i, (center, box) in enumerate(user_defined_boxes):
+        x, y, w, h = box
+        cv2.rectangle(image, (x, y), (x + w, y + h), (0, 255, 0), 2)
+
+    cv2.imshow('MediaPipe Pose', image)
+    key = cv2.waitKey(1)
+
+    if key == 32:  # Spacebar pressed
+        break
+    elif key == 27:  # ESC key to exit early
+        cap.release()
+        cv2.destroyAllWindows()
+        exit()
+
 
 # This function generates a sound with properties based on the distance to an object.
 def emit_sound_based_on_distance(distance, max_distance=500):
@@ -80,32 +112,32 @@ def emit_sound_based_on_distance(distance, max_distance=500):
 # This function identifies the closest user-defined object to the user's wrist that is also above the wrist.
 def find_closest_object(hand_center, objects_centers):
     if not objects_centers or hand_center is None:
-        return None, float('inf')
+        return None, float('inf'), None
     # Filter objects that are above the wrist's y-coordinate.
-    filtered_objects_centers = [(center, box) for center, box in objects_centers if center[1] < hand_center[1]]
+    filtered_objects_centers = [(i, center, box) for i, (center, box) in enumerate(objects_centers) if center[1] < hand_center[1]]
     if not filtered_objects_centers:
-        return None, float('inf')
-    distances = [np.linalg.norm(np.array(hand_center) - np.array(center)) for center, _ in filtered_objects_centers]
+        return None, float('inf'), None
+    distances = [np.linalg.norm(np.array(hand_center) - np.array(center)) for _, center, _ in filtered_objects_centers]
     min_distance_index = np.argmin(distances)
-    return filtered_objects_centers[min_distance_index], distances[min_distance_index]
+    closest_object_index, closest_object_center, _ = filtered_objects_centers[min_distance_index]
+    return closest_object_center, distances[min_distance_index], closest_object_index
 
 # This function checks if the wrist is in proximity to any user-defined objects, indicating a touch.
-def check_for_touch(wrist_center, objects_centers_and_boxes, touch_threshold=50):
+def check_for_touch(wrist_center, objects_centers_and_boxes, touchThreshold=20):
     for i, (center, _) in enumerate(objects_centers_and_boxes):
         distance = np.linalg.norm(np.array(wrist_center) - np.array(center))
-        if distance <= touch_threshold:
+        if distance <= touchThreshold:
             return True, i  # Return True and the index of the touched object
     return False, None  # No touch detected
 
-with mp_pose.Pose(static_image_mode=False, min_detection_confidence=0.6, model_complexity=0) as pose:
+with mp_pose.Pose(static_image_mode=False, min_detection_confidence=0.5, model_complexity=0) as pose:
     # Initialize webcam.
     cap = cv2.VideoCapture(0)
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640) 
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 480) 
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)  
-    frame_skip = 1
+    frame_skip = 5
     frame_count = 5
 
-    previous_closest_wrist_name = None
     while cap.isOpened():
         success, image = cap.read()
         if not success or frame_count % frame_skip != 0:
@@ -118,62 +150,57 @@ with mp_pose.Pose(static_image_mode=False, min_detection_confidence=0.6, model_c
 
         image_height, image_width, _ = image.shape
 
-        overall_closest_distance = float('inf')
-        overall_closest_pair = None
-        closest_wrist_name = None
-
         if results.pose_landmarks:
             wrist_centers = find_extremities_centers(results.pose_landmarks, image_width, image_height)
             wrist_names = ['Right Hand', 'Left Hand', 'Right Foot', 'Left Foot']
 
+            # Modified part: We process each wrist/foot individually and make decisions based on lock status.
             for wrist_center, wrist_name in zip(wrist_centers, wrist_names):
-                if locked_wrist_name is None or wrist_name == locked_wrist_name:
-                    closest_object, distance_to_closest = find_closest_object(wrist_center, user_defined_boxes)
-                    if closest_object and distance_to_closest < overall_closest_distance:
-                        overall_closest_distance = distance_to_closest
-                        overall_closest_pair = (wrist_center, closest_object)
-                        closest_wrist_name = wrist_name
+                # No longer automatically finding the closest object here
 
-            if closest_wrist_name and (locked_wrist_name is None or closest_wrist_name == locked_wrist_name):
-                wrist_center, closest_object = overall_closest_pair
-                user_defined_object_center, user_defined_object_box = closest_object
-                cv2.line(image, wrist_center, user_defined_object_center, (0, 255, 0), 3)
-                emit_sound_based_on_distance(overall_closest_distance)
+                # Only proceed if this wrist is the locked wrist or if there's no locked limb yet
+                if locked_wrist_name == wrist_name or locked_wrist_name is None:
+                    if locked_rock_index is not None:
+                        # If a rock is already locked with this limb, maintain that lock
+                        closest_object_center, box = user_defined_boxes[locked_rock_index]
+                        # Directly use the locked rock's center for distance and drawing
+                        distance_to_closest = np.linalg.norm(np.array(wrist_center) - np.array(closest_object_center))
+                        cv2.line(image, wrist_center, closest_object_center, (0, 255, 0), 3)
+                        emit_sound_based_on_distance(distance_to_closest)
 
-                touched, touched_index = check_for_touch(wrist_center, user_defined_boxes, touch_threshold=50)
-                if touched:
-                    if touched_index == highest_box_index:
-                        async_speak("You're done for")
-                    user_defined_boxes.pop(touched_index)
-                    update_highest_box()
-                    # Update the condition here to ensure the locked limb changes after a touch
-                    if locked_wrist_name is not None:
-                        last_locked_wrist_name = locked_wrist_name
-                    locked_wrist_name = None  # Unlock the limb after a touch
-                else:
-                    if locked_wrist_name is None:
-                        # Choose a different limb if the current choice is the same as the last locked limb
-                        eligible_wrist_names = [name for name in wrist_names if name != last_locked_wrist_name]
-                        if closest_wrist_name in eligible_wrist_names:
-                            locked_wrist_name = closest_wrist_name
-                            async_speak(f"{closest_wrist_name}")
-                        elif eligible_wrist_names:
-                            # Optionally handle the case where the closest wrist is the same as the last locked one
-                            locked_wrist_name = eligible_wrist_names[0]
-                            async_speak(f"{eligible_wrist_names[0]}")
+                        touched, _ = check_for_touch(wrist_center, [user_defined_boxes[locked_rock_index]], touchThreshold=20)
+                        if touched:
+                            mixer.music.play()
+                            time.sleep(1)
+                            user_defined_boxes.pop(locked_rock_index)
+                            update_highest_box()
+                            locked_wrist_name = None
+                            locked_rock_index = None
+                            if highest_box_index is None:
+                                async_speak("Level completed!")
+                                break
+                    else:
+                        # Lock the limb to the closest rock above it only if no limb is currently locked
+                        _, _, closest_object_index = find_closest_object(wrist_center, user_defined_boxes)
+                        if closest_object_index is not None and locked_wrist_name is None:
+                            locked_wrist_name = wrist_name
+                            locked_rock_index = closest_object_index
+                            async_speak(f"{locked_wrist_name}")
+            
+            if locked_wrist_name:
+                cv2.putText(image, f"{locked_wrist_name}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
 
-                cv2.putText(image, f"{closest_wrist_name} is closer", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2, cv2.LINE_AA)
-
+            # Drawing logic remains mostly unchanged, highlighting locked and highest rocks
             for i, (center, box) in enumerate(user_defined_boxes):
                 x, y, w, h = box
-                # Check if the current box is the highest; if so, draw it in red
                 if i == highest_box_index:
-                    cv2.rectangle(image, (x, y), (x + w, y + h), (0, 0, 255), 2)  # Red color
+                    cv2.rectangle(image, (x, y), (x + w, y + h), (0, 0, 255), 2)
+                elif i == locked_rock_index:
+                    cv2.rectangle(image, (x, y), (x + w, y + h), (255, 0, 0), 2)
                 else:
-                    cv2.rectangle(image, (x, y), (x + w, y + h), (0, 255, 0), 2)  # Green color
+                    cv2.rectangle(image, (x, y), (x + w, y + h), (0, 255, 0), 2)
 
         cv2.imshow('MediaPipe Pose', image)
-
         if cv2.waitKey(5) & 0xFF == 27:
             break
         frame_count += 1
